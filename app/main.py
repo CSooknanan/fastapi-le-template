@@ -55,7 +55,7 @@ def login_action(
   password: str = Form(),
 ):
   
-  user = db.exec(select(User).where(username == username)).one_or_none()
+  user = db.exec(select(User).where(User.username == username)).one_or_none()
   if user and user.check_password(password):
     response = RedirectResponse(url=request.url_for("index_view"), status_code=status.HTTP_303_SEE_OTHER)
     access_token = create_access_token(data={"sub": f"{user.id}"})

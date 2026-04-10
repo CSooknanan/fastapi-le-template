@@ -12,6 +12,9 @@ from sqlmodel import select
 from app.models import User
 from app.utilities import flash, create_access_token
 from fastapi.staticfiles import StaticFiles
+from app.models import Album, Track, Comment
+from fastapi import Form
+from typing import Optional
 
 
 app = FastAPI(middleware=[
@@ -73,11 +76,83 @@ def login_action(
 
 
 @app.get('/app')
-def home_view(request: Request, user: AuthDep):
+def home_view(
+  request: Request,
+  user: AuthDep,
+  db: SessionDep,
+  album_id: Optional[int] = None,
+  track_id: Optional[int] = None,
+):
+  albums =db.exec(select(Album)).all()
+  selected_album = None
+  selected_track = None
+
+  if album_id:
+    selected_album = db.exec(select(Album).where(Album.id == album_id)).first()
+
+  if track_id:
+    selected_track = db.exec(select(Track).where(Track.id == track_id)).first()
+    if selected_track and not selected_album:
+      selected_album = selected_track.album
+
   return templates.TemplateResponse(
-          request=request, 
-          name="index.html",
-      )
+    request=request,
+    name="index.html",
+    context={
+      "request": request,
+      "current_user": user,
+      "albums": albums,
+      "selected_album": selected_album,
+      "selected_track": selected_track,
+    }
+  )
+
+@app.post('/comment/{track_id}')
+def add_comment_action(request: Request, track_id: int, user: AuthDep, db: SessionDep, text: str = Form(...)):
+    # Notice we are now saving user_id=user.id!
+    new_comment = Comment(text=text, track_id=track_id, user_id=user.id)
+    db.add(new_comment)
+    db.commit()
+    
+    track = db.exec(select(Track).where(Track.id == track_id)).first()
+    return RedirectResponse(url=f"/app?album_id={track.album_id}&track_id={track.id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+
+@app.get('/delete_comment/{comment_id}')
+def delete_comment_action(request: Request, comment_id: int, user: AuthDep, db: SessionDep):
+    comment = db.exec(select(Comment).where(Comment.id == comment_id)).first()
+    
+    # Security: Only delete if the comment exists AND belongs to the logged-in user
+    if comment and comment.user_id == user.id:
+        track_id = comment.track_id
+        album_id = comment.track.album_id
+        db.delete(comment)
+        db.commit()
+        return RedirectResponse(url=f"/app?album_id={album_id}&track_id={track_id}", status_code=status.HTTP_303_SEE_OTHER)
+        
+    return RedirectResponse(url="/app", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get('/like/{track_id}')
+def like_action(request: Request, track_id: int, user: AuthDep, db: SessionDep):
+    track = db.exec(select(Track).where(Track.id == track_id)).first()
+    if track:
+        track.likes += 1
+        db.add(track)
+        db.commit()
+        return RedirectResponse(url=f"/app?album_id={track.album_id}&track_id={track.id}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/app", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get('/dislike/{track_id}')
+def dislike_action(request: Request, track_id: int, user: AuthDep, db: SessionDep):
+    track = db.exec(select(Track).where(Track.id == track_id)).first()
+    if track:
+        track.dislikes += 1
+        db.add(track)
+        db.commit()
+        return RedirectResponse(url=f"/app?album_id={track.album_id}&track_id={track.id}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/app", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get('/logout')
 async def logout(request: Request):
